@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # PostgreSQL + PostGIS Geospatial Database
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: orbitmind-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: orbitmind
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d orbitmind"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # OrbitMind FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orbitmind-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/orbitmind
+      AI_MODE: mock
+      MODEL_CACHE_DIR: /app/data/models
+      UPLOAD_DIR: /app/data/uploads
+      PROCESSED_DIR: /app/data/processed
+      RESULT_DIR: /app/data/results
+      MAX_UPLOAD_SIZE_MB: 500
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      PORT: 8000
+      HOST: 0.0.0.0
+    ports:
+      - "8000:8000"
+    volumes:
+      - orbitmind_uploads:/app/data/uploads
+      - orbitmind_processed:/app/data/processed
+      - orbitmind_results:/app/data/results
+      - ./data/models:/app/data/models
+
+volumes:
+  pgdata:
+  orbitmind_uploads:
+  orbitmind_processed:
+  orbitmind_results:
