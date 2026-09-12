@@ -1,0 +1,6 @@
+﻿# Ignore all raw, intermediate, processed, cached, and result artifacts in data/
+*
+!*/
+!.gitignore
+!**/.gitkeep
+!**/.gitignore

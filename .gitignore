@@ -1,12 +1,203 @@
-# Byte-compiled / optimized / DLL files
+# ==============================================================================
+# AUTONOMOUS GIS & REMOTE SENSING ENGINE - PRODUCTION .GITIGNORE
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Geospatial & Remote Sensing Datasets
+# ------------------------------------------------------------------------------
+# Raw and derivative raster archives
+*.tif
+*.tiff
+*.geotiff
+*.jp2
+*.jpeg2000
+*.hdf
+*.hdf5
+*.h5
+*.nc
+*.nc4
+*.netcdf
+*.img
+*.pix
+*.grd
+*.bil
+*.bip
+*.bsq
+*.mrf
+*.idx
+*.ovr
+*.aux.xml
+
+# Vector datasets & multi-file shapefile sidecars
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.sbn
+*.sbx
+*.fbn
+*.fbx
+*.ain
+*.aih
+*.ixs
+*.mxs
+*.atx
+*.xml
+*.gpkg
+*.gpkg-journal
+*.gdb/
+*.geojson
+*.geojsonl
+*.geo.json
+*.kml
+*.kmz
+*.gml
+*.osm
+*.pbf
+
+# Survey & Field Collections (ODK, GPS, Raw tabular logs)
+*.odk
+*.xform
+*.xml.enc
+*.gpx
+*.loc
+*.fit
+*.nmea
+raw_surveys/
+field_dumps/
+gps_traces/
+*.survey.csv
+*.survey.xlsx
+*odk_submissions*
+
+# DEMs, Toposheets, Elevation models & Hydrologic derivatives
+*.dem
+*.vrt
+*.asc
+*.flt
+*.hdr
+*.dt0
+*.dt1
+*.dt2
+*.hgt
+*.las
+*.laz
+*.ply
+*.xyz
+
+# ------------------------------------------------------------------------------
+# 2. Intermediate Artifacts, Tiles & Previews
+# ------------------------------------------------------------------------------
+# Processing scratchpads, warps, and sliding windows
+/data/raw/*
+!/data/raw/.gitkeep
+!/data/raw/.gitignore
+/data/processed/*
+!/data/processed/.gitkeep
+!/data/processed/.gitignore
+/data/previews/*
+!/data/previews/.gitkeep
+!/data/previews/.gitignore
+/data/benchmarks/*
+!/data/benchmarks/.gitkeep
+!/data/benchmarks/.gitignore
+/data/uploads/*
+!/data/uploads/.gitkeep
+!/data/uploads/.gitignore
+/data/results/*
+!/data/results/.gitkeep
+!/data/results/.gitignore
+/data/cache/*
+!/data/cache/.gitkeep
+!/data/cache/.gitignore
+
+# Preview stretched imagery, map tile caches, vector contour exports
+/static/cache/
+/public/tiles/
+*.cache
+*.tilecache
+*.mbtiles
+*warp_temp*
+*tile_cache*
+*slice_temp*
+*contour_temp*
+*temp_exports*
+/temp_processing/
+/tmp/
+
+# Deep Learning weights, checkpoints, onnx/tensorrt models
+models_cache/
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+*.ckpt
+*.safetensors
+/weights/
+/checkpoints/
+
+# ------------------------------------------------------------------------------
+# 3. Database, Mock Stores & State Snapshots
+# ------------------------------------------------------------------------------
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.sql
+*.sql.gz
+*.dump
+*.tar
+*.bak
+test_orbitmind.db
+data/orbitmind.db
+
+# Supabase / Local database temporary directories and mock stores
+/supabase/.temp/
+/supabase/.branches/
+/mock_db_data/
+/.supabase/local/
+*.snapshot.json
+
+# ------------------------------------------------------------------------------
+# 4. Environment, Secrets, Certificates & Keys
+# ------------------------------------------------------------------------------
+# Secrets & Env files (strictly preserve .env.example)
+.env
+.env.*
+!.env.example
+*.env
+*.env.local
+*.env.development.local
+*.env.test.local
+*.env.production.local
+
+# Cloud provider credentials, service accounts, and crypto keys
+*service_account*.json
+*credentials*.json
+*firebase-adminsdk*.json
+*.pem
+*.key
+*.pub
+*.crt
+*.p12
+*.pfx
+*.pkcs12
+*.id_rsa
+*.id_ed25519
+jwt_keys/
+secrets/
+.secret*
+
+# ------------------------------------------------------------------------------
+# 5. Python & Backend Runtime / Build
+# ------------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -23,41 +214,66 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Virtual environments
-.env
-.venv
-env/
+# Python Virtual Environments
 venv/
+.venv/
+env/
 ENV/
 env.bak/
 venv.bak/
-
-# IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Testing & Coverage
+pip-wheel-metadata/
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 .tox/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
 
-# Local data & storage
-data/uploads/*
-!data/uploads/.gitkeep
-data/processed/*
-!data/processed/.gitkeep
-data/results/*
-!data/results/.gitkeep
-models_cache/*
+# ------------------------------------------------------------------------------
+# 6. Frontend / Node / TypeScript Runtime & Build
+# ------------------------------------------------------------------------------
+node_modules/
+frontend/node_modules/
+.pnp
+.pnp.js
+frontend/dist/
+frontend/build/
+frontend/.vite/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.turbo/
+.next/
+.out/
 
-# SQLite test databases
-*.db
-*.sqlite
-*.sqlite3
+# ------------------------------------------------------------------------------
+# 7. OS & Editor Artifacts
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+[Dd]esktop.ini
 
-# Logs
-*.log
+# IDE & Editor Settings
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+*.bak
+
