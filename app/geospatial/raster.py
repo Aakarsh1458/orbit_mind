@@ -163,3 +163,109 @@ def write_geotiff(
 
     logger.info("Successfully wrote GeoTIFF to %s (dims: %dx%d, bands: %d)", out_path, width, height, count)
     return str(out_path)
+
+
+def read_raster(file_path: Union[str, Path]) -> Dict[str, Any]:
+    """Reads both metadata and data array for a raster."""
+    metadata = read_raster_metadata(file_path)
+    data = read_bands(file_path)
+    return {
+        "data": data,
+        "metadata": metadata,
+        "crs": metadata.get("crs", "EPSG:4326"),
+        "transform": metadata.get("transform")
+    }
+
+
+def write_raster(
+    output_path: Union[str, Path],
+    data: np.ndarray,
+    crs: Union[str, rasterio.crs.CRS] = "EPSG:4326",
+    transform: Optional[Union[List[float], Affine]] = None
+) -> str:
+    """Convenience function around write_geotiff."""
+    t = transform or [0.0001, 0.0, 0.0, 0.0, -0.0001, 0.0]
+    return write_geotiff(output_path=output_path, data=data, transform=t, crs=crs)
+
+
+def generate_raster_preview_bytes(file_path: Union[str, Path]) -> bytes:
+    """
+    Converts any geospatial raster (GeoTIFF, TIFF, SAR, multispectral)
+    into standard web-compatible PNG image bytes with 2-98% contrast stretch.
+    """
+    import io
+    path = Path(file_path).resolve()
+    suffix = path.suffix.lower()
+
+    if suffix in (".png", ".jpg", ".jpeg", ".webp"):
+        return path.read_bytes()
+
+    try:
+        with rasterio.open(str(path)) as src:
+            count = src.count
+            if count >= 3:
+                # If Sentinel-2 / Landsat with 4+ bands, use Red, Green, Blue (typically 4, 3, 2)
+                bands = [4, 3, 2] if count >= 4 else [1, 2, 3]
+                data = src.read(bands).astype(np.float32)
+                rgb = np.zeros((data.shape[1], data.shape[2], 3), dtype=np.uint8)
+                for i in range(3):
+                    b = data[i]
+                    p2, p98 = np.percentile(b, (2, 98))
+                    if p98 > p2:
+                        b_norm = np.clip((b - p2) / (p98 - p2), 0, 1) * 255.0
+                    else:
+                        b_norm = np.clip(b, 0, 255)
+                    rgb[:, :, i] = b_norm.astype(np.uint8)
+                img = Image.fromarray(rgb)
+            elif count == 2:
+                # SAR polarizations (e.g. VV and VH)
+                data = src.read().astype(np.float32)
+                vv, vh = data[0], data[1]
+                p2_vv, p98_vv = np.percentile(vv, (2, 98))
+                p2_vh, p98_vh = np.percentile(vh, (2, 98))
+                norm_vv = np.clip((vv - p2_vv) / (max(p98_vv - p2_vv, 1e-4)), 0, 1) * 255.0
+                norm_vh = np.clip((vh - p2_vh) / (max(p98_vh - p2_vh, 1e-4)), 0, 1) * 255.0
+                ratio = np.clip((norm_vv / (norm_vh + 1.0)) * 128.0, 0, 255)
+                rgb = np.stack([norm_vv.astype(np.uint8), norm_vh.astype(np.uint8), ratio.astype(np.uint8)], axis=-1)
+                img = Image.fromarray(rgb)
+            else:
+                b = src.read(1).astype(np.float32)
+                p2, p98 = np.percentile(b, (2, 98))
+                if p98 > p2:
+                    b_norm = np.clip((b - p2) / (p98 - p2), 0, 1) * 255.0
+                else:
+                    b_norm = np.clip(b, 0, 255)
+                img = Image.fromarray(b_norm.astype(np.uint8))
+
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception as e:
+        logger.warning("Rasterio preview generation failed for %s (%s). Falling back to PIL.", path, e)
+        with Image.open(str(path)) as pil_img:
+            buf = io.BytesIO()
+            pil_img.convert("RGB").save(buf, format="PNG")
+            return buf.getvalue()
+
+
+def get_or_create_preview_file(file_path: Union[str, Path]) -> Path:
+    """
+    Returns a Path to a browser-renderable image file (PNG).
+    Caches converted GeoTIFFs to disk next to the original file as *_preview.png.
+    """
+    path = Path(file_path).resolve()
+    if path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+        return path
+
+    cache_path = path.parent / f"{path.stem}_preview.png"
+    if cache_path.exists() and cache_path.stat().st_size > 0:
+        if cache_path.stat().st_mtime >= path.stat().st_mtime:
+            return cache_path
+
+    # Generate and write cache
+    png_bytes = generate_raster_preview_bytes(path)
+    with open(cache_path, "wb") as f:
+        f.write(png_bytes)
+    return cache_path
+
+

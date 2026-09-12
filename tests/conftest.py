@@ -18,6 +18,11 @@ os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test_orbitmind.db"
 os.environ["UPLOAD_DIR"] = "./data/test_uploads"
 os.environ["PROCESSED_DIR"] = "./data/test_processed"
 os.environ["RESULT_DIR"] = "./data/test_results"
+os.environ["OPENROUTER_API_KEY"] = ""
+os.environ["NEMOTRON_API_KEY"] = ""
+os.environ["OPENAI_API_KEY"] = ""
+os.environ["GEMINI_API_KEY"] = ""
+os.environ["HF_TOKEN"] = ""
 
 from app.core.config import settings
 from app.models.database import Base, get_db

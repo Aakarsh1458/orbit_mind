@@ -76,11 +76,14 @@ def calculate_segmentation_statistics(
             "class_id": class_id,
             "pixels": pixel_count,
             "percentage": pct,
-            "area_km2": area_km2
+            "area_km2": area_km2,
+            "area_hectares": round(area_km2 * 100.0, 2)
         }
 
+    total_area_km2 = round(total_pixels * pixel_area_km2, 4)
     return {
         "total_pixels": total_pixels,
-        "total_area_km2": round(total_pixels * pixel_area_km2, 4),
+        "total_area_km2": total_area_km2,
+        "total_area_hectares": round(total_area_km2 * 100.0, 2),
         "classes": class_stats
     }

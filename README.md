@@ -9,37 +9,57 @@ OrbitMind accepts multi-spectral, optical, and Synthetic Aperture Radar (SAR) im
 
 ---
 
-## Architecture
+## Architecture & AI Orchestration Flow
 
 ```
-Client / API Request
-        │
-        ▼
-FastAPI Application (/api/v1)
-        │
-        ▼
-Query Understanding (Rule-based / Extensible LLM)
-        │
-        ▼
-OrbitMind Agent Controller (Orchestrator)
-        │
-        ├───► Geospatial Processing Engine (GDAL, Rasterio, GeoPandas, Shapely, PyProj)
-        │
-        └───► Specialist Models (BaseRemoteSensingModel via ModelRegistry)
-                ├── VQAModel (Visual Question Answering)
-                ├── CaptioningModel (Scene Summarization)
-                ├── ChangeDetectionModel (Bitemporal Change Detection)
-                ├── SegmentationModel (Land Cover Classification)
-                └── OpticalSARModel (Optical + SAR Radar Fusion)
-        │
-        ▼
-Evidence Generator & Spatial Statistics
-        │
-        ▼
-Async Background Worker & Database (PostgreSQL + PostGIS / SQLAlchemy Async)
-        │
-        ▼
-Structured JSON API Response (with "mode": "mock" | "production")
+                           NATURAL LANGUAGE USER QUERY
+                                       │
+                                       ▼
+                  POST /api/v1/chat    │   POST /api/v1/chat/stream
+                                       │
+                                       ▼
+                             OrbitMindOrchestrator
+                             (OrchestrationState)
+                                       │
+            ┌──────────────────────────┼──────────────────────────┐
+            ▼                          ▼                          ▼
+    QueryUnderstanding            TaskPlanner            ConversationMemory
+   (Structured Pydantic)      (Detects missing inputs)  (Multi-turn Sessions)
+            │                          │                          │
+            └──────────────────────────┼──────────────────────────┘
+                                       │
+                                       ▼
+                            ModelRouter & LLMRouter
+                         (Primary & Fallback Selection)
+                                       │
+                                       ▼
+                                  ToolEngine
+                      (ToolRegistry & Geospatial Tools)
+                                       │
+                                       ▼
+                            Specialist Model Engine
+                       (VQA, Change Detection, Seg, SAR)
+                                       │
+                                       ▼
+                               OutputValidator
+                     (CRS, Dtype, Bounds, Mask, Overlap)
+                                       │
+                          [If Invalid or Model Fails]
+                                       ▼
+                             RetryEngine & Policies
+                         (Exponential Backoff & Fallback)
+                                       │
+                                       ▼
+                                EvidenceEngine
+                       (GeoTIFF masks, GeoJSON, Stats)
+                                       │
+                                       ▼
+                               ResponseGenerator
+                       (Strictly Factual Natural Answer)
+                                       │
+                                       ▼
+                           Database Persistence &
+                           Structured JSON Response
 ```
 
 ---
@@ -49,6 +69,7 @@ Structured JSON API Response (with "mode": "mock" | "production")
 | Domain | Technology |
 |---|---|
 | **API Framework** | Python 3.11+, FastAPI, Uvicorn, Pydantic v2, Pydantic Settings |
+| **LLM Orchestration** | Provider Abstraction (Google Gemini, OpenAI, Hugging Face, Local LLMs) |
 | **Geospatial Processing** | GDAL, Rasterio, GeoPandas, Shapely, PyProj |
 | **Machine Learning / AI** | PyTorch, Hugging Face Transformers, Hugging Face Hub, NumPy |
 | **Image Processing** | Pillow (PIL), OpenCV |
@@ -63,11 +84,14 @@ Structured JSON API Response (with "mode": "mock" | "production")
 ```
 orbitmind/
 ├── app/
-│   ├── main.py                     # FastAPI entrypoint, lifespan, and CORS setup
+│   ├── main.py                     # FastAPI entrypoint, lifespan, CORS, and router registration
 │   ├── api/
 │   │   ├── dependencies.py         # Database session & security dependencies
 │   │   └── routes/
 │   │       ├── health.py           # Health check endpoint (GET /health)
+│   │       ├── chat.py             # Sync & SSE chat API (POST /api/v1/chat, /stream)
+│   │       ├── conversations.py    # Multi-turn conversation sessions (CRUD & messages)
+│   │       ├── ai_status.py        # Subsystem status, models, and provider health
 │   │       ├── imagery.py          # Imagery upload & catalog (POST /api/v1/imagery/upload)
 │   │       ├── queries.py          # Query intent classification (POST /api/v1/query)
 │   │       ├── analysis.py         # Async analysis dispatch (POST /api/v1/analysis)
@@ -75,64 +99,80 @@ orbitmind/
 │   │       └── results.py          # Structured result & artifact download
 │   ├── core/
 │   │   ├── config.py               # Pydantic BaseSettings (.env configuration)
-│   │   ├── logging.py              # Centralized logging configuration
-│   │   └── security.py             # Filename sanitization, path traversal checks, file size validation
-│   ├── schemas/                    # Pydantic v2 validation and serialization schemas
-│   │   ├── query.py
-│   │   ├── imagery.py
-│   │   ├── analysis.py
-│   │   ├── evidence.py
-│   │   └── response.py
-│   ├── models/                     # SQLAlchemy ORM database models
-│   │   ├── database.py             # Async database session manager
-│   │   ├── imagery.py              # Imagery table schema
-│   │   ├── analysis.py             # AnalysisJob table schema
-│   │   └── result.py               # AnalysisResult table schema
-│   ├── services/
-│   │   ├── query_service.py        # Natural language query classifier
-│   │   ├── agent_controller.py     # Central orchestration pipeline
-│   │   ├── imagery_service.py      # Upload processing and metadata extraction
-│   │   ├── preprocessing_service.py # CRS check, raster alignment, bounding box overlap
-│   │   ├── evidence_service.py     # Artifact and provenance compiler
-│   │   ├── statistics_service.py   # Spatial statistics calculation
-│   │   └── satellite_providers.py  # Local, Sentinel, and Landsat provider interfaces
-│   ├── ai/
-│   │   ├── base.py                 # BaseRemoteSensingModel abstract interface
-│   │   ├── registry.py             # Dynamic model registry
-│   │   ├── change_detection.py     # Bi-temporal change detection specialist
-│   │   ├── segmentation.py         # Semantic land cover segmentation specialist
-│   │   ├── vqa.py                  # Visual Question Answering specialist
+│   │   ├── logging.py              # Centralized structured logging configuration
+│   │   └── security.py             # Filename sanitization, path traversal checks
+│   ├── orchestration/              # Core AI Orchestration Subsystem
+│   │   ├── orchestrator.py         # OrbitMindOrchestrator bounded execution engine
+│   │   ├── state.py                # OrchestrationState typed lifecycle object
+│   │   ├── planner.py              # TaskPlanner & StructuredIntent verification
+│   │   ├── router.py               # ModelRouter with fallback lookup
+│   │   ├── executor.py             # ExecutionEngine for tools & models
+│   │   ├── validator.py            # OutputValidator (CRS, schema, mask, NaN, overlap)
+│   │   ├── retry_engine.py         # RetryEngine with exponential backoff & fallback
+│   │   ├── response_generator.py   # Grounded natural language synthesizer
+│   │   └── policies.py             # RetryPolicy, FallbackPolicy, and SafetyPolicy
+│   ├── llm/                        # Decoupled LLM Vendor Abstraction
+│   │   ├── base.py                 # BaseLLMProvider abstract interface
+│   │   ├── gemini_provider.py      # Google Gemini REST client
+│   │   ├── openai_provider.py      # OpenAI-compatible API client
+│   │   ├── huggingface_provider.py # Hugging Face Inference client
+│   │   ├── local_provider.py       # Local model client (Ollama / vLLM)
+│   │   └── router.py               # LLMRouter with provider failover
+│   ├── tools/                      # Tool Registry & Security
+│   │   ├── registry.py             # ToolRegistry with whitelisted geospatial tools
+│   │   └── schema.py               # ToolCall & argument validation schemas
+│   ├── ai/                         # Specialist Remote Sensing AI Models
+│   │   ├── base.py                 # BaseRemoteSensingModel & ModelCapability
+│   │   ├── registry.py             # ModelRegistry with primary & fallback models
+│   │   ├── change_detection.py     # Bi-temporal change detector & fallback
+│   │   ├── segmentation.py         # Multi-class land cover segmentation
+│   │   ├── vqa.py                  # Visual Question Answering
 │   │   ├── captioning.py           # Scene captioning specialist
 │   │   └── optical_sar.py          # Optical + SAR radar multimodal specialist
-│   ├── geospatial/
-│   │   ├── raster.py               # Rasterio/GDAL GeoTIFF reader/writer/metadata
+│   ├── geospatial/                 # Spatial math & raster operations
+│   │   ├── raster.py               # GeoTIFF reading, writing, windowing, and tags
 │   │   ├── vector.py               # Mask polygonization & geodesic area (km²)
-│   │   ├── crs.py                  # CRS parsing and equivalence verification
+│   │   ├── crs.py                  # Coordinate reference system parsing & equivalence
 │   │   ├── reprojection.py         # Raster alignment and coordinate reprojection
-│   │   └── statistics.py           # Pixel and surface metric calculations
+│   │   └── statistics.py           # Changed surface and class metric calculations
+│   ├── models/                     # SQLAlchemy ORM Database Schemas
+│   │   ├── database.py             # Async engine & session factory
+│   │   ├── imagery.py              # Imagery table schema
+│   │   ├── analysis.py             # AnalysisJob table schema
+│   │   ├── result.py               # AnalysisResult table schema
+│   │   └── conversation.py         # Conversations, messages, and orchestration runs
+│   ├── services/                   # Business domain services
+│   │   ├── conversation_service.py # Multi-turn memory management
+│   │   ├── imagery_service.py      # Upload and metadata extraction
+│   │   └── satellite_providers.py  # Local, Sentinel, and Landsat providers
 │   └── workers/
 │       └── analysis_worker.py      # Background async worker task
-├── tests/                          # Complete automated test suite (no GPU required)
-│   ├── conftest.py                 # Async fixtures & synthetic GeoTIFF generator
+├── tests/                          # Automated Pytest Suite (30 tests, 0 warnings)
+│   ├── conftest.py                 # Synthetic GeoTIFF generator & async fixtures
 │   ├── test_health.py
+│   ├── test_ai_status.py
+│   ├── test_chat_api.py
+│   ├── test_conversations.py
+│   ├── test_orchestration_loop.py
+│   ├── test_orchestration_failure.py
+│   ├── test_orchestration_validation.py
+│   ├── test_orchestration_missing_inputs.py
 │   ├── test_imagery.py
 │   ├── test_query.py
 │   ├── test_geospatial.py
 │   ├── test_models.py
 │   └── test_analysis_jobs.py
-├── migrations/                     # Alembic database migration scripts
-│   ├── env.py
-│   └── versions/001_initial_tables.py
-├── data/                           # Local storage volumes
-│   ├── uploads/
-│   ├── processed/
-│   └── results/
-├── Dockerfile                      # Production Docker container definition
+├── migrations/                     # Alembic database migrations
+│   ├── versions/
+│   │   ├── 001_initial_tables.py
+│   │   └── 002_orchestration_tables.py
+├── data/                           # Local storage volumes (uploads, processed, results)
+├── Dockerfile                      # Production Docker container
 ├── docker-compose.yml              # PostGIS and API service orchestration
-├── requirements.txt                # Python package dependencies
-├── .env.example                    # Environment variable template
-├── alembic.ini                     # Alembic configuration
-└── pytest.ini                      # Pytest configuration
+├── requirements.txt
+├── .env.example
+├── alembic.ini
+└── pytest.ini
 ```
 
 ---
@@ -141,7 +181,7 @@ orbitmind/
 
 ### Prerequisites
 - Python 3.11+
-- GDAL libraries (or use the pre-configured Docker image)
+- GDAL libraries (included automatically in Docker or pre-installed in environment)
 
 ### Local Environment Setup
 
@@ -170,14 +210,9 @@ orbitmind/
    ```bash
    cp .env.example .env
    ```
-   *Note: For local testing without a running PostgreSQL instance, set `DATABASE_URL=sqlite+aiosqlite:///./orbitmind.db` in `.env`.*
+   *Note: For local development on bare metal without Docker, the backend automatically uses `sqlite+aiosqlite:///./data/orbitmind.db` if no external PostgreSQL server is detected.*
 
-5. **Run Database Migrations:**
-   ```bash
-   alembic upgrade head
-   ```
-
-6. **Start the FastAPI Server:**
+5. **Start the FastAPI Server:**
    ```bash
    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
@@ -190,20 +225,40 @@ orbitmind/
 
 OrbitMind includes a multi-container Docker Compose configuration pairing the FastAPI backend with a dedicated PostgreSQL instance equipped with the PostGIS spatial extensions.
 
-### Start with Docker Compose:
-
 ```bash
 docker compose up --build
 ```
 
-This starts:
+This spins up:
 1. `orbitmind-db`: PostgreSQL 16 + PostGIS 3.4 on port `5432`
 2. `orbitmind-api`: FastAPI backend on port `8000`
 
-### Verify container health:
-```bash
-docker compose ps
-curl http://localhost:8000/health
+---
+
+## Where to Provide API Keys and Model IDs
+
+OrbitMind enforces strict security: **API keys are NEVER hardcoded, committed to git, or printed in logs.**
+
+Configure your credentials in `.env` (or environment variables in Docker):
+
+```ini
+# Choose default LLM provider: gemini, openai, huggingface, or local
+DEFAULT_LLM_PROVIDER=gemini
+
+# Google Gemini API
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-1.5-flash
+
+# OpenAI API
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-4o
+
+# Hugging Face API
+HF_TOKEN=your_hf_token_here
+HF_MODEL_ID=meta-llama/Llama-3.1-8B-Instruct
+
+# Local LLM (Ollama / vLLM / LocalAI)
+LOCAL_LLM_URL=http://localhost:11434/v1
 ```
 
 ---
@@ -213,7 +268,7 @@ curl http://localhost:8000/health
 OrbitMind enforces strict scientific integrity: **AI results are never faked.**
 
 ### `AI_MODE=mock` (Default Development Mode)
-- Deterministic, mathematically verifiable baseline computations.
+- Follows the identical full orchestration pipeline: `query -> planner -> router -> tools -> model -> validator -> evidence -> response`.
 - Bitemporal change detection calculates actual pixel differences and exports valid GeoTIFF change masks.
 - Responses are explicitly marked: `"mode": "mock"`.
 - Runs on any standard CPU without downloading gigabytes of weights.
@@ -221,82 +276,21 @@ OrbitMind enforces strict scientific integrity: **AI results are never faked.**
 ### `AI_MODE=production` (Production Deep Learning Mode)
 - Invokes trained PyTorch / Hugging Face model pipelines.
 - Reads deep neural network checkpoints from `MODEL_CACHE_DIR`.
-- If model weights or required hardware are unavailable, the backend fails safely with a clear, descriptive exception rather than fabricating confidence scores or masks.
-
-### How to Switch Modes:
-Edit `.env` or set the environment variable:
-```bash
-# To switch to production:
-AI_MODE=production
-
-# To switch back to mock:
-AI_MODE=mock
-```
+- If model weights or required hardware are unavailable, the backend fails safely with a clear, descriptive exception (`MODEL_UNAVAILABLE`) rather than fabricating confidence scores or masks.
 
 ---
 
 ## API Endpoints & Example Usage
 
-### 1. Health Check
-```bash
-curl -X GET http://localhost:8000/health
-```
-**Response:**
-```json
-{
-  "status": "ok",
-  "service": "orbitmind-backend",
-  "version": "1.0.0",
-  "ai_mode": "mock"
-}
-```
+### 1. Synchronous Chat API (`POST /api/v1/chat`)
 
----
-
-### 2. Upload Satellite Imagery
-Upload a GeoTIFF, TIFF, or PNG/JPEG raster file. The backend automatically parses spatial metadata (CRS, dimensions, bands, bounds, resolution, affine transform).
+Send natural language queries to trigger complete AI orchestration:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/imagery/upload \
-  -F "file=@data/samples/berlin_2022.tif" \
-  -F "sensor=Sentinel-2"
-```
-
-**Response (`201 Created`):**
-```json
-{
-  "id": "5f4a8da3-1b2c-4d5e-8f9a-0b1c2d3e4f5a",
-  "filename": "berlin_2022.tif",
-  "path": "/app/data/uploads/109dcc4f_berlin_2022.tif",
-  "sensor": "Sentinel-2",
-  "crs": "EPSG:4326",
-  "width": 1024,
-  "height": 1024,
-  "bands": 4,
-  "bounds": {
-    "left": 13.35,
-    "bottom": 52.48,
-    "right": 13.45,
-    "top": 52.55
-  },
-  "resolution": [0.0001, 0.0001],
-  "dtype": "uint16",
-  "is_georeferenced": true,
-  "file_size_bytes": 8388608,
-  "created_at": "2026-09-10T06:30:00Z"
-}
-```
-
----
-
-### 3. Natural Language Query Understanding
-Test how the query classifier interprets your natural-language request before queuing analysis.
-
-```bash
-curl -X POST http://localhost:8000/api/v1/query \
+curl -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "Where did urban expansion occur between 2022 and 2025?",
+    "message": "Where did urban expansion occur between 2022 and 2025?",
     "imagery_ids": [
       "5f4a8da3-1b2c-4d5e-8f9a-0b1c2d3e4f5a",
       "73ea25fa-2c3d-4e5f-9a0b-1c2d3e4f5a6b"
@@ -307,156 +301,177 @@ curl -X POST http://localhost:8000/api/v1/query \
 **Response (`200 OK`):**
 ```json
 {
-  "query_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "query": "Where did urban expansion occur between 2022 and 2025?",
-  "detected_intent": "change_detection",
-  "confidence": 0.91,
-  "reason": "The query asks for temporal differences or surface evolution.",
-  "selected_analysis": "change_detection",
-  "status": "ready"
-}
-```
-
----
-
-### 4. Start an Asynchronous Analysis Job
-Launches the analysis asynchronously without blocking the client. Returns immediately with `job_id` and `queued` status.
-
-```bash
-curl -X POST http://localhost:8000/api/v1/analysis \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "Where did urban expansion occur between 2022 and 2025?",
-    "imagery_ids": [
-      "5f4a8da3-1b2c-4d5e-8f9a-0b1c2d3e4f5a",
-      "73ea25fa-2c3d-4e5f-9a0b-1c2d3e4f5a6b"
-    ]
-  }'
-```
-
-**Response (`202 Accepted`):**
-```json
-{
-  "job_id": "edd02685-9931-4155-91d0-340f3f7375d1",
-  "status": "queued",
-  "analysis_type": "change_detection",
-  "created_at": "2026-09-10T06:35:00Z"
-}
-```
-
----
-
-### 5. Check Job Status
-Poll or monitor job execution progress.
-
-```bash
-curl -X GET http://localhost:8000/api/v1/jobs/edd02685-9931-4155-91d0-340f3f7375d1
-```
-
-**Response (`200 OK`):**
-```json
-{
-  "job_id": "edd02685-9931-4155-91d0-340f3f7375d1",
-  "query": "Where did urban expansion occur between 2022 and 2025?",
-  "analysis_type": "change_detection",
+  "request_id": "3289e753-bd7c-4e68-a1f6-399657a23fd7",
+  "conversation_id": "329ef672-980c-4e19-a3c2-2a5ffe264b19",
   "status": "completed",
-  "progress": 1.0,
-  "created_at": "2026-09-10T06:35:00Z",
-  "started_at": "2026-09-10T06:35:01Z",
-  "completed_at": "2026-09-10T06:35:04Z",
-  "error": null
-}
-```
-
----
-
-### 6. Retrieve Structured Analysis Results
-Fetch full structured results, including summary, model confidence, calculated area ($km^2$), evidence links, and execution provenance trace.
-
-```bash
-curl -X GET http://localhost:8000/api/v1/results/edd02685-9931-4155-91d0-340f3f7375d1
-```
-
-**Response (`200 OK`):**
-```json
-{
-  "job_id": "edd02685-9931-4155-91d0-340f3f7375d1",
-  "analysis_type": "change_detection",
-  "mode": "mock",
-  "summary": "Bitemporal change detection identified 12.40 km² (14.06%) of surface changes between the specified acquisition periods.",
-  "confidence": 0.88,
-  "statistics": {
-    "total_pixels": 409600,
-    "changed_pixels": 57600,
-    "unchanged_pixels": 352000,
-    "percentage_changed": 14.06,
-    "changed_area_km2": 12.4,
-    "total_area_km2": 88.2,
-    "changed_area_hectares": 1240.0
+  "answer": "Bitemporal change detection identified 1.24 km² (25.0%) of urban expansion between 2022 and 2025.",
+  "analysis": {
+    "task": "change_detection",
+    "model": "OrbitMind-BiTemporal-ChangeDetector-v1",
+    "fallback_used": false,
+    "provider": "mock"
   },
-  "evidence": {
-    "change_mask": "/data/results/change_mask_5f4a8da3_berlin_2022_73ea25fa_berlin_2025.tif",
-    "source_images": [
-      "/data/uploads/5f4a8da3_berlin_2022.tif",
-      "/data/uploads/73ea25fa_berlin_2025.tif"
-    ],
-    "crs": "EPSG:4326",
-    "detected_regions_count": 14,
-    "sample_footprints": [
-      {
-        "type": "Polygon",
-        "coordinates": [[[13.407, 52.518], [13.407, 52.515], [13.409, 52.515], [13.409, 52.518], [13.407, 52.518]]]
-      }
+  "statistics": {
+    "total_pixels": 400,
+    "changed_pixels": 100,
+    "unchanged_pixels": 300,
+    "percentage_changed": 25.0,
+    "changed_area_km2": 1.2392,
+    "total_area_km2": 4.9569,
+    "changed_area_hectares": 123.92
+  },
+  "evidence": [
+    {
+      "type": "change_mask",
+      "path": "/data/results/change_mask_scene1_scene2.tif"
+    },
+    {
+      "type": "source_images",
+      "paths": ["/data/uploads/scene1.tif", "/data/uploads/scene2.tif"]
+    },
+    {
+      "type": "crs",
+      "path": "EPSG:4326"
+    }
+  ],
+  "execution": {
+    "steps": 8,
+    "duration_ms": 108.06,
+    "trace": [
+      "query_understanding",
+      "planning",
+      "model_selection",
+      "preprocessing",
+      "inference",
+      "validation",
+      "evidence_generation",
+      "response_generation"
     ]
   },
-  "execution_trace": [
-    "query_understanding",
-    "imagery_validation",
-    "geospatial_preprocessing",
-    "change_detection",
-    "statistics",
-    "evidence_generation"
-  ],
-  "created_at": "2026-09-10T06:35:04Z"
+  "errors": null
 }
 ```
 
 ---
 
-### 7. Download Generated Evidence Mask (GeoTIFF)
-Directly download the georeferenced output GeoTIFF file for visualization in GIS software (QGIS, ArcGIS, GDAL CLI):
+### 2. Streaming Chat API with Server-Sent Events (`POST /api/v1/chat/stream`)
+
+Stream real-time execution progress to clients without exposing private chain-of-thought:
 
 ```bash
-curl -X GET "http://localhost:8000/api/v1/results/edd02685-9931-4155-91d0-340f3f7375d1/download/change_mask_5f4a8da3_berlin_2022_73ea25fa_berlin_2025.tif" \
-  --output change_mask.tif
+curl -N -X POST http://localhost:8000/api/v1/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Where did urban expansion occur between 2022 and 2025?",
+    "imagery_ids": ["img1", "img2"]
+  }'
+```
+
+**Stream Output:**
+```
+event: status
+data: {"stage": "planning"}
+
+event: status
+data: {"stage": "model_selection"}
+
+event: status
+data: {"stage": "preprocessing"}
+
+event: status
+data: {"stage": "inference"}
+
+event: status
+data: {"stage": "validation"}
+
+event: completed
+data: {"status": "completed", "answer": "...", "analysis": {...}}
+```
+
+---
+
+### 3. Missing Input Handling
+
+If a user requests bitemporal change detection but provides only 1 imagery scene:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Where did urban expansion occur between 2022 and 2025?",
+    "imagery_ids": ["img_2025_only"]
+  }'
+```
+
+**Response (`status: needs_input`):**
+```json
+{
+  "request_id": "...",
+  "status": "needs_input",
+  "answer": "Change detection requires 2 temporal satellite images (before & after), but only 1 was provided. Please provide the required second image.",
+  "analysis": {
+    "task": "change_detection"
+  },
+  "execution": {
+    "steps": 2,
+    "trace": ["query_understanding", "planning"]
+  }
+}
+```
+
+---
+
+### 4. Subsystem Status & Model Capabilities
+
+```bash
+# High level system readiness
+curl -X GET http://localhost:8000/api/v1/ai/status
+
+# Registered models & capabilities
+curl -X GET http://localhost:8000/api/v1/ai/models
+
+# Supported LLM providers
+curl -X GET http://localhost:8000/api/v1/ai/providers
+
+# Validate specific provider configuration safely
+curl -X POST http://localhost:8000/api/v1/ai/providers/gemini/validate
+```
+
+---
+
+### 5. Multi-Turn Conversations
+
+```bash
+# Create conversation session
+curl -X POST http://localhost:8000/api/v1/conversations \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Urban Expansion Session"}'
+
+# Append message
+curl -X POST http://localhost:8000/api/v1/conversations/{id}/messages \
+  -H "Content-Type: application/json" \
+  -d '{"role": "user", "content": "Analyze this region."}'
+
+# Get message history
+curl -X GET http://localhost:8000/api/v1/conversations/{id}/messages
 ```
 
 ---
 
 ## Automated Testing
 
-Run the full test suite without needing a GPU:
+Run the full test suite (30 unit & integration tests, no GPU required):
 
 ```bash
 pytest -v
 ```
 
-### What is tested:
-- `test_health.py`: Health endpoint status and service information.
-- `test_imagery.py`: GeoTIFF upload, spatial metadata extraction (bounds, resolution, CRS, transform), and security validation (path traversal, invalid extensions).
-- `test_query.py`: Intent classification across all 5 specialist tasks (VQA, captioning, change detection, segmentation, optical/SAR).
-- `test_geospatial.py`: Raster reading, writing, CRS conversion, spatial overlap checks, mask polygonization, and geodesic area ($km^2$) calculations.
-- `test_models.py`: Specialist model interfaces, registry lookup, mock execution, and production mode safety checks.
-- `test_analysis_jobs.py`: Complete end-to-end integration workflow (uploading T1/T2 synthetic GeoTIFFs, queuing analysis, executing worker, verifying structured results, and downloading evidence).
-
----
-
-## Satellite Data Integration
-
-OrbitMind includes the `SatelliteDataProvider` abstraction (`app/services/satellite_providers.py`) designed for extensible remote sensing catalog integration:
-
-- **`LocalFileProvider`**: Currently active for user-uploaded rasters and local scenes.
-- **`SentinelProvider`**: Plug-and-play stub for European Space Agency Copernicus STAC APIs (Sentinel-1 SAR and Sentinel-2 Multi-Spectral).
-- **`LandsatProvider`**: Plug-and-play stub for USGS Landsat 8/9 STAC catalogs.
-
-To connect external STAC catalogs, configure API credentials in `.env` and initialize the corresponding provider in `app/services/satellite_providers.py`.
+### Verified Test Cases:
+- `test_orchestration_loop.py`: Primary model failure -> Retry engine catches error -> Invokes fallback model -> Successful inference -> Validation -> Response.
+- `test_orchestration_failure.py`: All models fail -> Halts after `MAX_RETRIES` with `AI_EXECUTION_FAILED` without entering an infinite loop.
+- `test_orchestration_validation.py`: Detects and rejects invalid model output (NaN confidence, missing masks, corrupted dictionaries).
+- `test_orchestration_missing_inputs.py`: Temporal query with 1 image halts safely with `needs_input`.
+- `test_chat_api.py`: Sync (`POST /api/v1/chat`) and streaming (`POST /api/v1/chat/stream`) SSE verification.
+- `test_conversations.py`: Multi-turn session creation, message logging, and context retention.
+- `test_ai_status.py`: Health, model capabilities, and safe provider credential validation.
+- `test_health.py`, `test_imagery.py`, `test_query.py`, `test_geospatial.py`, `test_models.py`, `test_analysis_jobs.py`.

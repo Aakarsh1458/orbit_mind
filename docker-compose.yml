@@ -42,6 +42,7 @@ services:
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       PORT: 8000
       HOST: 0.0.0.0
+      RUNNING_IN_DOCKER: "true"
     ports:
       - "8000:8000"
     volumes:

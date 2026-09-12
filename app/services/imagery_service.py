@@ -81,6 +81,45 @@ class ImageryService:
         logger.info("Successfully registered imagery record: %s", imagery_record.id)
         return imagery_record
 
+    async def register_existing_raster(
+        self,
+        file_path: Path,
+        filename: str,
+        db: AsyncSession,
+        sensor: Optional[str] = "Unknown"
+    ) -> Imagery:
+        """Registers an already-saved raster on disk into the database."""
+        metadata = read_raster_metadata(file_path)
+        file_size = file_path.stat().st_size
+
+        imagery_record = Imagery(
+            id=str(uuid.uuid4()),
+            filename=filename,
+            path=str(file_path.resolve()),
+            sensor=sensor or "Unknown",
+            crs=metadata["crs"],
+            width=metadata["width"],
+            height=metadata["height"],
+            bands=metadata["bands"],
+            bounds=metadata["bounds"],
+            resolution=metadata["resolution"],
+            dtype=metadata["dtype"],
+            is_georeferenced=metadata.get("is_georeferenced", True),
+            file_size_bytes=file_size,
+            meta_info={
+                "driver": metadata.get("driver"),
+                "transform": metadata.get("transform"),
+                "tags": metadata.get("tags")
+            }
+        )
+
+        db.add(imagery_record)
+        await db.commit()
+        await db.refresh(imagery_record)
+
+        logger.info("Successfully registered existing raster: %s (%s)", imagery_record.id, filename)
+        return imagery_record
+
     async def get_imagery_by_id(self, imagery_id: str, db: AsyncSession) -> Optional[Imagery]:
         stmt = select(Imagery).where(Imagery.id == imagery_id)
         result = await db.execute(stmt)

@@ -25,6 +25,7 @@ opencv-python-headless>=4.10.0.84
 
 # Machine Learning & AI Orchestration
 huggingface-hub>=0.24.0
+openai>=1.30.0
 
 # Testing & Code Quality
 pytest>=8.3.0

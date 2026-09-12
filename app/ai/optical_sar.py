@@ -2,7 +2,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 import numpy as np
 
-from app.ai.base import BaseRemoteSensingModel
+from app.ai.base import BaseRemoteSensingModel, ModelUnavailableError
+from app.core.config import settings
 from app.core.logging import logger
 from app.geospatial.raster import read_bands, read_raster_metadata, write_geotiff
 from app.geospatial.crs import are_crs_equal
@@ -68,9 +69,10 @@ class OpticalSARModel(BaseRemoteSensingModel):
             meta_sar = read_raster_metadata(aligned_sar_path)
 
         if self.mode == "production":
-            raise NotImplementedError(
-                "Production Optical-SAR multimodal fusion model weights are not loaded. "
-                "Set AI_MODE=mock for local testing."
+            raise ModelUnavailableError(
+                f"Production Optical-SAR multimodal fusion model weights are not loaded. "
+                f"Mount weights in {settings.MODEL_CACHE_DIR} or enable AI_MODE=mock.",
+                status_code="MODEL_UNAVAILABLE"
             )
         else:
             # Deterministic fusion evidence generation
@@ -150,3 +152,17 @@ class OpticalSARModel(BaseRemoteSensingModel):
             "inputs": ["Optical (RGB/NIR)", "SAR (VV/VH)"],
             "output_formats": ["GeoTIFF Composite", "JSON"]
         }
+
+    def get_capabilities(self):
+        from app.ai.base import ModelCapability
+        return ModelCapability(
+            tasks=["optical_sar"],
+            modalities=["optical", "sar"],
+            input_formats=["raster", "geotiff"],
+            output_formats=["fused_composite", "geotiff"],
+            min_inputs=2,
+            max_inputs=2,
+            supported_sensors=["Sentinel-1", "Sentinel-2", "Landsat"],
+            supports_gpu=True,
+            supports_cpu=True
+        )

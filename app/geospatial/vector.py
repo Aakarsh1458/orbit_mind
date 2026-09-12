@@ -88,3 +88,28 @@ def calculate_area_km2(
         # Projected in meters
         area_m2 = poly.area
         return abs(area_m2) / 1_000_000.0
+
+
+def calculate_area_hectares(
+    geometry_or_geojson: Union[Dict[str, Any], Polygon, MultiPolygon],
+    crs: str = "EPSG:4326"
+) -> float:
+    """
+    Calculates geographic area of a geometry in hectares (1 km² = 100 hectares).
+    """
+    return round(calculate_area_km2(geometry_or_geojson, crs=crs) * 100.0, 2)
+
+
+def calculate_geodesic_metrics(
+    geometry_or_geojson: Union[Dict[str, Any], Polygon, MultiPolygon],
+    crs: str = "EPSG:4326"
+) -> Dict[str, float]:
+    """
+    Calculates exact geodesic area in both km² and hectares using Shapely + PyProj.
+    """
+    km2 = calculate_area_km2(geometry_or_geojson, crs=crs)
+    return {
+        "area_km2": round(km2, 4),
+        "area_hectares": round(km2 * 100.0, 2)
+    }
+

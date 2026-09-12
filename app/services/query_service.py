@@ -82,8 +82,53 @@ class RuleBasedQueryClassifier(BaseQueryClassifier):
         r"identify the"
     ]
 
+    COMPREHENSIVE_PATTERNS = [
+        r"6\s+(?:remote\s+sensing\s+)?models",
+        r"six\s+(?:remote\s+sensing\s+)?models",
+        r"all\s+(?:the\s+)?6\s+(?:remote\s+sensing\s+)?models",
+        r"all\s+models",
+        r"comprehensive",
+        r"full\s+(?:specialist\s+)?analysis",
+        r"complete\s+analysis",
+        r"perform\s+(?:all\s+)?(?:the\s+)?6\s+(?:remote\s+sensing\s+)?models",
+        r"run\s+(?:all\s+)?(?:the\s+)?6\s+(?:remote\s+sensing\s+)?models",
+        r"all\s+6\s+specialist",
+        r"6\s+specialist\s+models",
+        r"segmentation.*change.*detection.*captioning",
+        r"analyze\s+this\s+satellite\s+image",
+    ]
+
+    CLOUD_REMOVAL_PATTERNS = [
+        r"cloud\s+removal",
+        r"remove\s+clouds?",
+        r"cloud\s+reconstruction",
+        r"penetrate\s+clouds?",
+        r"decloud",
+        r"sen12ms"
+    ]
+
     def classify(self, query: str) -> Dict[str, Any]:
         text = query.strip().lower()
+
+        # 0. Check Comprehensive / All 6 Models
+        for pattern in self.COMPREHENSIVE_PATTERNS:
+            if re.search(pattern, text):
+                return {
+                    "intent": "comprehensive_analysis",
+                    "confidence": 0.98,
+                    "reason": f"User requested comprehensive multi-model execution across all 6 specialists (matched '{pattern}').",
+                    "selected_analysis": "comprehensive_analysis"
+                }
+
+        # 0b. Check Cloud Removal / Reconstruction
+        for pattern in self.CLOUD_REMOVAL_PATTERNS:
+            if re.search(pattern, text):
+                return {
+                    "intent": "cloud_removal",
+                    "confidence": 0.95,
+                    "reason": f"Query requests cloud removal and atmospheric penetration (matched '{pattern}').",
+                    "selected_analysis": "cloud_removal"
+                }
 
         # 1. Check Optical + SAR
         for pattern in self.OPTICAL_SAR_PATTERNS:

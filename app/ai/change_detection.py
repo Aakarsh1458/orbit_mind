@@ -3,7 +3,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import rasterio
 
-from app.ai.base import BaseRemoteSensingModel
+from app.ai.base import BaseRemoteSensingModel, ModelUnavailableError
+from app.core.config import settings
 from app.core.logging import logger
 from app.geospatial.raster import read_bands, read_raster_metadata, write_geotiff
 from app.geospatial.crs import are_crs_equal
@@ -87,10 +88,11 @@ class ChangeDetectionModel(BaseRemoteSensingModel):
         # 4. Inference execution
         if self.mode == "production":
             # Production pipeline branch: deep learning inference
-            # If no trained weights are mounted, raise actionable error rather than faking
-            raise NotImplementedError(
-                "Production change detection model weights are not loaded. "
-                "Mount model checkpoint in MODEL_CACHE_DIR or switch AI_MODE=mock."
+            # If no trained weights are mounted or GPU unavailable, fail safely with explicit status
+            raise ModelUnavailableError(
+                f"Production change detection model weights are not loaded. "
+                f"Mount model checkpoint in {settings.MODEL_CACHE_DIR} or enable AI_MODE=mock.",
+                status_code="MODEL_UNAVAILABLE"
             )
         else:
             # Deterministic, verifiable spectral difference calculation
@@ -185,3 +187,43 @@ class ChangeDetectionModel(BaseRemoteSensingModel):
             "supported_sensors": ["Sentinel-2", "Landsat", "Aerial/Optical"],
             "output_formats": ["GeoTIFF", "GeoJSON"]
         }
+
+    def get_capabilities(self):
+        from app.ai.base import ModelCapability
+        return ModelCapability(
+            tasks=["change_detection"],
+            modalities=["optical"],
+            input_formats=["raster", "geotiff"],
+            output_formats=["probability_mask", "geotiff"],
+            min_inputs=2,
+            max_inputs=4,
+            supported_sensors=["Sentinel-2", "Landsat", "Aerial/Optical"],
+            supports_gpu=True,
+            supports_cpu=True
+        )
+
+
+class BaselineChangeDetectionFallback(ChangeDetectionModel):
+    """
+    Secondary lightweight fallback model for change detection.
+    Activated when the primary model fails or encounters a transient error.
+    """
+    def __init__(self, mode: str = "mock"):
+        super().__init__(mode=mode)
+        self.model_name = "OrbitMind-Baseline-ChangeDetector-Fallback"
+
+    def load(self) -> None:
+        self.is_loaded = True
+
+    def predict(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        # Always executes deterministic spectral diff even in production as a robust safety fallback
+        saved_mode = self.mode
+        self.mode = "mock"
+        try:
+            res = super().predict(inputs)
+            res["model"] = self.model_name
+            res["summary"] += " (Processed via secondary fallback model)"
+            res["fallback_used"] = True
+            return res
+        finally:
+            self.mode = saved_mode

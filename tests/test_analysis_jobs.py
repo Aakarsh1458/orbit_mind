@@ -103,3 +103,95 @@ async def test_analysis_job_not_found(client: AsyncClient):
 
     res2 = await client.get("/api/v1/results/unknown-job-id")
     assert res2.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_download_path_traversal_blocked(client: AsyncClient):
+    """Verify that path traversal attempts in artifact download are strictly rejected with 400."""
+    res = await client.get("/api/v1/results/any-job/download/..%2F..%2Fetc%2Fpasswd")
+    assert res.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_download_direct_result_artifact(client: AsyncClient, tmp_path: Path):
+    """Verify that universal download resolves artifacts located directly in RESULT_DIR."""
+    from app.core.config import settings
+    res_dir = Path(settings.RESULT_DIR)
+    res_dir.mkdir(parents=True, exist_ok=True)
+
+    test_tif = res_dir / "test_universal_artifact.tif"
+    test_tif.write_bytes(b"SimulatedGeoTIFFContent")
+
+    dl_res = await client.get(f"/api/v1/results/chat_req_123/download/{test_tif.name}")
+    assert dl_res.status_code == 200
+    assert dl_res.content == b"SimulatedGeoTIFFContent"
+
+
+@pytest.mark.asyncio
+async def test_segmentation_analysis_job(client: AsyncClient, sample_geotiff_t1: str):
+    """Verify background worker execution for semantic land cover segmentation."""
+    # 1. Upload scene
+    with open(sample_geotiff_t1, "rb") as f:
+        upload_res = await client.post(
+            "/api/v1/imagery/upload",
+            files={"file": ("seg_scene.tif", f.read(), "image/tiff")},
+            data={"sensor": "Sentinel-2"}
+        )
+    assert upload_res.status_code == 201
+    img_id = upload_res.json()["id"]
+
+    # 2. Dispatch segmentation job
+    res = await client.post(
+        "/api/v1/analysis",
+        json={"imagery_ids": [img_id], "analysis_type": "segmentation"}
+    )
+    assert res.status_code == 202
+    job_id = res.json()["job_id"]
+
+    # 3. Run worker
+    await run_analysis_worker(job_id)
+
+    # 4. Fetch result
+    job_res = await client.get(f"/api/v1/jobs/{job_id}")
+    assert job_res.json()["status"] == "completed"
+
+    result_res = await client.get(f"/api/v1/results/{job_id}")
+    result = result_res.json()
+    assert result["analysis_type"] == "segmentation"
+    assert "classes" in result["statistics"]
+    assert "total_area_hectares" in result["statistics"]
+
+
+@pytest.mark.asyncio
+async def test_analysis_worker_failure(client: AsyncClient, sample_geotiff_t1: str):
+    """Verify that worker handles errors gracefully and marks job failed."""
+    # 1. Upload 1 image
+    with open(sample_geotiff_t1, "rb") as f:
+        upload_res = await client.post(
+            "/api/v1/imagery/upload",
+            files={"file": ("single_scene.tif", f.read(), "image/tiff")},
+            data={"sensor": "Sentinel-2"}
+        )
+    assert upload_res.status_code == 201
+    img_id = upload_res.json()["id"]
+
+    # 2. Dispatch change detection job with only 1 image (requires 2)
+    res = await client.post(
+        "/api/v1/analysis",
+        json={"imagery_ids": [img_id], "analysis_type": "change_detection"}
+    )
+    assert res.status_code == 202
+    job_id = res.json()["job_id"]
+
+    # 3. Run worker
+    await run_analysis_worker(job_id)
+
+    # 4. Verify status is failed
+    job_res = await client.get(f"/api/v1/jobs/{job_id}")
+    assert job_res.json()["status"] == "failed"
+    assert job_res.json()["error"] is not None
+    assert "requires at least 2 imagery datasets" in job_res.json()["error"]
+    assert job_res.json()["completed_at"] is not None
+
+
+

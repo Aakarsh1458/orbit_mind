@@ -2,7 +2,7 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 from fastapi import HTTPException, status
 from app.core.config import settings
 
@@ -80,3 +80,27 @@ def validate_file_size(size_bytes: int, max_mb: Optional[int] = None) -> None:
         raise FileSizeExceededException(
             f"File size {size_bytes / (1024 * 1024):.1f}MB exceeds the maximum limit of {max_mb or settings.MAX_UPLOAD_SIZE_MB}MB."
         )
+
+
+def validate_safe_path(requested_path: Union[str, Path], allowed_base_dirs: Optional[List[Union[str, Path]]] = None) -> Path:
+    """
+    Validates that a requested file path does not attempt directory traversal
+    and resides strictly within one of the whitelisted base directories.
+    """
+    path_str = str(requested_path)
+    if ".." in path_str or "\x00" in path_str:
+        raise SecurityException("Directory traversal attack detected in file path.")
+
+    resolved_path = Path(path_str).resolve()
+
+    if allowed_base_dirs:
+        resolved_bases = [Path(b).resolve() for b in allowed_base_dirs]
+        is_safe = any(
+            resolved_path == b or b in resolved_path.parents
+            for b in resolved_bases
+        )
+        if not is_safe:
+            raise SecurityException(f"Access to path outside allowed storage directories is forbidden: {resolved_path.name}")
+
+    return resolved_path
+

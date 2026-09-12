@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict, List
-from app.ai.base import BaseRemoteSensingModel
+from app.ai.base import BaseRemoteSensingModel, ModelUnavailableError
+from app.core.config import settings
 from app.core.logging import logger
 from app.geospatial.raster import read_raster_metadata
 
@@ -41,10 +42,49 @@ class VQAModel(BaseRemoteSensingModel):
         meta = read_raster_metadata(img_path)
 
         if self.mode == "production":
-            raise NotImplementedError(
-                "Production VQA model checkpoint not configured. "
-                "Specify model weights in MODEL_CACHE_DIR or run in AI_MODE=mock."
-            )
+            from app.core.config import settings
+            from app.llm.router import WorkloadStage, llm_router
+            if settings.GEMINI_API_KEY or settings.OPENROUTER_API_KEY:
+                import asyncio
+                import concurrent.futures
+                messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a remote sensing scientist and visual question answering specialist. "
+                            f"Satellite Image: {meta['width']}x{meta['height']} pixels, {meta['bands']} bands, CRS: {meta['crs']}. "
+                            "Answer the user's question accurately."
+                        )
+                    },
+                    {"role": "user", "content": inputs["query"]}
+                ]
+                try:
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+
+                    if loop and loop.is_running():
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            chat_res = pool.submit(
+                                asyncio.run,
+                                llm_router.route_chat(WorkloadStage.STAGE_5_VQA, messages=messages, temperature=0.1, max_tokens=256)
+                            ).result()
+                    else:
+                        chat_res = asyncio.run(
+                            llm_router.route_chat(WorkloadStage.STAGE_5_VQA, messages=messages, temperature=0.1, max_tokens=256)
+                        )
+                    answer = chat_res["content"].strip()
+                    confidence = 0.94
+                except Exception as exc:
+                    logger.warning("VQA Stage 5 routing failure: %s", exc)
+                    raise
+            else:
+                raise ModelUnavailableError(
+                    f"Production VQA model checkpoint or API credentials not configured. "
+                    f"Set GEMINI_API_KEY or OPENROUTER_API_KEY, or run in AI_MODE=mock.",
+                    status_code="MODEL_UNAVAILABLE"
+                )
         else:
             # Deterministic domain-specific VQA reasoning
             confidence = 0.86
@@ -99,3 +139,17 @@ class VQAModel(BaseRemoteSensingModel):
             "mode": self.mode,
             "modality": "Vision-Language"
         }
+
+    def get_capabilities(self):
+        from app.ai.base import ModelCapability
+        return ModelCapability(
+            tasks=["vqa"],
+            modalities=["optical", "text"],
+            input_formats=["raster", "text"],
+            output_formats=["text", "json"],
+            min_inputs=1,
+            max_inputs=1,
+            supported_sensors=["Sentinel-2", "Landsat", "Aerial/Optical"],
+            supports_gpu=True,
+            supports_cpu=True
+        )

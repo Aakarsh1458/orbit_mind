@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict, List
-from app.ai.base import BaseRemoteSensingModel
+from app.ai.base import BaseRemoteSensingModel, ModelUnavailableError
+from app.core.config import settings
 from app.core.logging import logger
 from app.geospatial.raster import read_raster_metadata
 
@@ -37,8 +38,10 @@ class CaptioningModel(BaseRemoteSensingModel):
         meta = read_raster_metadata(img_path)
 
         if self.mode == "production":
-            raise NotImplementedError(
-                "Production captioning checkpoint not configured. Set AI_MODE=mock for local dev."
+            raise ModelUnavailableError(
+                f"Production captioning checkpoint not configured. "
+                f"Mount weights in {settings.MODEL_CACHE_DIR} or set AI_MODE=mock.",
+                status_code="MODEL_UNAVAILABLE"
             )
         else:
             confidence = 0.89
@@ -81,3 +84,17 @@ class CaptioningModel(BaseRemoteSensingModel):
             "task": "captioning",
             "mode": self.mode
         }
+
+    def get_capabilities(self):
+        from app.ai.base import ModelCapability
+        return ModelCapability(
+            tasks=["captioning"],
+            modalities=["optical"],
+            input_formats=["raster"],
+            output_formats=["text", "json"],
+            min_inputs=1,
+            max_inputs=1,
+            supported_sensors=["Sentinel-2", "Landsat", "Aerial/Optical"],
+            supports_gpu=True,
+            supports_cpu=True
+        )

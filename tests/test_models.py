@@ -100,13 +100,35 @@ def test_optical_sar_mock(sample_geotiff_t1: str, sample_geotiff_t2: str, tmp_pa
     assert Path(output["evidence"]["fused_raster"]).exists()
 
 
-def test_production_mode_fails_safely_when_unconfigured(sample_geotiff_t1: str):
-    """Verify that in production mode, missing weights raise actionable errors rather than faking results."""
-    model = ChangeDetectionModel(mode="production")
-    model.load()
+from app.ai.base import ModelUnavailableError
+from app.orchestration.policies import FallbackPolicy
 
-    with pytest.raises(NotImplementedError) as exc_info:
-        model.predict({
-            "imagery_paths": [sample_geotiff_t1, sample_geotiff_t1]
-        })
-    assert "AI_MODE=mock" in str(exc_info.value)
+
+def test_production_mode_fails_safely_when_unconfigured(sample_geotiff_t1: str):
+    """Verify that in production mode, missing weights raise ModelUnavailableError with status_code=MODEL_UNAVAILABLE."""
+    # 1. Change detection
+    cd_model = ChangeDetectionModel(mode="production")
+    cd_model.load()
+    with pytest.raises(ModelUnavailableError) as exc_info:
+        cd_model.predict({"imagery_paths": [sample_geotiff_t1, sample_geotiff_t1]})
+    assert exc_info.value.status_code == "MODEL_UNAVAILABLE"
+    assert FallbackPolicy.should_fallback("change_detection", exc_info.value, fallback_used=False) is True
+
+    # 2. Segmentation
+    seg_model = SegmentationModel(mode="production")
+    with pytest.raises(ModelUnavailableError) as exc_info:
+        seg_model.predict({"imagery_paths": [sample_geotiff_t1]})
+    assert exc_info.value.status_code == "MODEL_UNAVAILABLE"
+
+    # 3. Optical-SAR
+    sar_model = OpticalSARModel(mode="production")
+    with pytest.raises(ModelUnavailableError) as exc_info:
+        sar_model.predict({"imagery_paths": [sample_geotiff_t1, sample_geotiff_t1]})
+    assert exc_info.value.status_code == "MODEL_UNAVAILABLE"
+
+    # 4. Captioning
+    cap_model = CaptioningModel(mode="production")
+    with pytest.raises(ModelUnavailableError) as exc_info:
+        cap_model.predict({"imagery_paths": [sample_geotiff_t1]})
+    assert exc_info.value.status_code == "MODEL_UNAVAILABLE"
+

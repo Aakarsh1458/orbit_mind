@@ -13,6 +13,10 @@ from app.api.routes import (
     analysis_router,
     jobs_router,
     results_router,
+    chat_router,
+    conversations_router,
+    ai_status_router,
+    dataset_router,
 )
 
 
@@ -38,6 +42,7 @@ An AI-powered remote-sensing backend that allows users and systems to query sate
 - **Bitemporal Change Detection** (Urban expansion, deforestation, flooding)
 - **Land Cover Semantic Segmentation**
 - **Multimodal Optical + SAR Radar Fusion**
+- **AI Orchestration & Multi-turn Chat API**
 - **Evidence-First Georeferenced Outputs** (GeoTIFF change/segmentation masks & spatial statistics)
     """,
     version=settings.APP_VERSION,
@@ -62,6 +67,10 @@ app.include_router(queries_router)
 app.include_router(analysis_router)
 app.include_router(jobs_router)
 app.include_router(results_router)
+app.include_router(chat_router)
+app.include_router(conversations_router)
+app.include_router(ai_status_router)
+app.include_router(dataset_router)
 
 
 @app.exception_handler(ValueError)

@@ -96,3 +96,49 @@ def test_change_and_segmentation_statistics():
     )
     assert seg_stats["classes"]["water"]["pixels"] == 1250
     assert seg_stats["classes"]["vegetation"]["pixels"] == 1250
+    assert "area_hectares" in seg_stats["classes"]["water"]
+    assert "total_area_hectares" in seg_stats
+
+
+def test_geodesic_metrics_and_hectares():
+    """Verify geodesic area in km2 and hectares."""
+    from app.geospatial.vector import calculate_area_hectares, calculate_geodesic_metrics
+    poly = Polygon([(0.0, 0.0), (0.01, 0.0), (0.01, 0.01), (0.0, 0.01), (0.0, 0.0)])
+    km2 = calculate_area_km2(poly, crs="EPSG:4326")
+    hectares = calculate_area_hectares(poly, crs="EPSG:4326")
+    metrics = calculate_geodesic_metrics(poly, crs="EPSG:4326")
+
+    assert km2 > 0
+    assert hectares == round(km2 * 100.0, 2)
+    assert metrics["area_km2"] == round(km2, 4)
+    assert metrics["area_hectares"] == hectares
+
+
+async def test_tool_registry_whitelisted_tools(sample_geotiff_t1: str):
+    """Verify whitelisted geospatial tool invocations via tool_registry."""
+    from app.tools.registry import tool_registry
+    from app.tools.schema import ToolCall
+
+    # 1. read_metadata
+    res_meta = await tool_registry.execute(
+        ToolCall(tool="read_metadata", arguments={"file_path": sample_geotiff_t1})
+    )
+    assert res_meta.success is True
+    assert res_meta.result["width"] == 64
+
+    # 2. compute_geodesic_area
+    geom = {"type": "Polygon", "coordinates": [[[0, 0], [0.01, 0], [0.01, 0.01], [0, 0.01], [0, 0]]]}
+    res_area = await tool_registry.execute(
+        ToolCall(tool="compute_geodesic_area", arguments={"geometry": geom, "crs": "EPSG:4326"})
+    )
+    assert res_area.success is True
+    assert "area_km2" in res_area.result
+    assert "area_hectares" in res_area.result
+
+    # 3. calculate_zonal_stats
+    res_zonal = await tool_registry.execute(
+        ToolCall(tool="calculate_zonal_stats", arguments={"raster_path": sample_geotiff_t1, "zones_path_or_geometry": geom})
+    )
+    assert res_zonal.success is True
+    assert "mean" in res_zonal.result
+

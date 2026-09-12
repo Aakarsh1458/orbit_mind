@@ -76,3 +76,38 @@ async def test_get_nonexistent_imagery(client: AsyncClient):
     """Test that retrieving an unknown imagery ID returns 404."""
     response = await client.get("/api/v1/imagery/nonexistent-uuid-000")
     assert response.status_code == 404
+
+
+def test_satellite_providers(tmp_path: Path):
+    """Test SentinelProvider and LandsatProvider STAC search, metadata, and scene hydration."""
+    from app.services.satellite_providers import SentinelProvider, LandsatProvider
+    bbox = [77.5, 12.9, 77.7, 13.1]
+
+    # 1. Sentinel Provider
+    sentinel = SentinelProvider(cache_dir=tmp_path)
+    s_results = sentinel.search(bbox=bbox)
+    assert len(s_results) >= 2
+    s2_scene = next(s for s in s_results if s["sensor"] == "Sentinel-2")
+    assert s2_scene["geometry"]["type"] == "Polygon"
+    assert "B08" in s2_scene["bands"]
+
+    s_meta = sentinel.get_metadata(s2_scene["id"])
+    assert s_meta["sensor"] == "Sentinel-2"
+    assert s_meta["status"] == "ready"
+
+    s_file = sentinel.download_or_load(s2_scene["id"])
+    assert Path(s_file).exists()
+
+    # 2. Landsat Provider
+    landsat = LandsatProvider(cache_dir=tmp_path)
+    l_results = landsat.search(bbox=bbox)
+    assert len(l_results) >= 1
+    lc_scene = l_results[0]
+    assert "Landsat" in lc_scene["sensor"]
+
+    l_meta = landsat.get_metadata(lc_scene["id"])
+    assert "Landsat" in l_meta["sensor"]
+
+    l_file = landsat.download_or_load(lc_scene["id"])
+    assert Path(l_file).exists()
+

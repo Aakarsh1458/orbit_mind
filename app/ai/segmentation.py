@@ -2,7 +2,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import numpy as np
 
-from app.ai.base import BaseRemoteSensingModel
+from app.ai.base import BaseRemoteSensingModel, ModelUnavailableError
+from app.core.config import settings
 from app.core.logging import logger
 from app.geospatial.raster import read_bands, read_raster_metadata, write_geotiff
 from app.geospatial.statistics import calculate_segmentation_statistics
@@ -56,9 +57,10 @@ class SegmentationModel(BaseRemoteSensingModel):
         arr = read_bands(img_path)
 
         if self.mode == "production":
-            raise NotImplementedError(
-                "Production segmentation weights are not configured. "
-                "Provide model weights or set AI_MODE=mock."
+            raise ModelUnavailableError(
+                f"Production segmentation weights are not configured. "
+                f"Mount model weights in {settings.MODEL_CACHE_DIR} or set AI_MODE=mock.",
+                status_code="MODEL_UNAVAILABLE"
             )
         else:
             # Deterministic mock segmentation using band thresholds / spatial partition
@@ -137,3 +139,17 @@ class SegmentationModel(BaseRemoteSensingModel):
             "classes": self.CLASS_MAP,
             "output_formats": ["GeoTIFF", "JSON"]
         }
+
+    def get_capabilities(self):
+        from app.ai.base import ModelCapability
+        return ModelCapability(
+            tasks=["segmentation"],
+            modalities=["optical"],
+            input_formats=["raster", "geotiff"],
+            output_formats=["segmentation_mask", "geotiff"],
+            min_inputs=1,
+            max_inputs=1,
+            supported_sensors=["Sentinel-2", "Landsat", "Aerial/Optical"],
+            supports_gpu=True,
+            supports_cpu=True
+        )

@@ -68,49 +68,90 @@ async def get_analysis_result(
     )
 
 
+from app.core.config import settings
+from app.core.security import validate_safe_path, SecurityException
+from app.models.conversation import OrchestrationRun
+
+
 @router.get(
-    "/{job_id}/download/{filename}",
+    "/{job_id}/download/{filename:path}",
     summary="Download generated evidence artifact",
-    description="Downloads the generated GeoTIFF change mask, segmentation raster, or composite for a specific analysis job."
+    description="Downloads the generated GeoTIFF change mask, segmentation raster, or composite for a specific analysis job or chat orchestration run."
 )
 async def download_evidence_file(
     job_id: str,
     filename: str,
     db: AsyncSession = Depends(get_db)
 ):
+    # 1. Reject path traversal in filename parameter
+    allowed_dirs = [
+        Path(settings.RESULT_DIR).resolve(),
+        Path(settings.PROCESSED_DIR).resolve(),
+        Path(settings.UPLOAD_DIR).resolve(),
+    ]
+
+    try:
+        # Validate that the requested filename itself does not have traversal components
+        if ".." in filename or "/" in filename or "\\" in filename:
+            raise SecurityException(f"Invalid filename: '{filename}'. Path traversal characters are forbidden.")
+    except SecurityException as sec_err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(sec_err.detail)
+        )
+
+    target_file: Optional[Path] = None
+
+    # 2. Check AnalysisResult table
     result_stmt = select(AnalysisResult).where(AnalysisResult.job_id == job_id)
     result_res = await db.execute(result_stmt)
     analysis_result = result_res.scalar_one_or_none()
 
-    if not analysis_result:
+    if analysis_result and analysis_result.evidence:
+        for k, v in analysis_result.evidence.items():
+            if isinstance(v, str) and filename in v:
+                cand = Path(v).resolve()
+                if cand.exists():
+                    target_file = cand
+                    break
+
+    # 3. Check OrchestrationRun table
+    if not target_file:
+        run_stmt = select(OrchestrationRun).where(OrchestrationRun.request_id == job_id)
+        run_res = await db.execute(run_stmt)
+        run = run_res.scalar_one_or_none()
+        if run and run.result_path:
+            cand = Path(run.result_path).resolve()
+            if cand.name == filename and cand.exists():
+                target_file = cand
+
+    # 4. Check RESULT_DIR / PROCESSED_DIR / UPLOAD_DIR
+    if not target_file:
+        for base in allowed_dirs:
+            cand = (base / filename).resolve()
+            if cand.exists():
+                target_file = cand
+                break
+
+    if not target_file or not target_file.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Result for job '{job_id}' not found."
+            detail=f"Evidence artifact '{filename}' not found for request/job '{job_id}'."
         )
 
-    # Search evidence dictionary for matching file
-    evidence = analysis_result.evidence
-    candidate_paths = []
-    for k, v in evidence.items():
-        if isinstance(v, str) and filename in v:
-            candidate_paths.append(v)
-
-    if not candidate_paths:
+    # 5. Final boundary security verification
+    try:
+        safe_target = validate_safe_path(target_file, allowed_base_dirs=allowed_dirs)
+    except SecurityException as sec_err:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Evidence artifact '{filename}' not found in job results."
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(sec_err.detail)
         )
 
-    target_file = Path(candidate_paths[0]).resolve()
-    if not target_file.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Evidence file does not exist on disk: {filename}"
-        )
-
-    media_type = "image/tiff" if target_file.suffix in (".tif", ".tiff") else "application/octet-stream"
+    media_type = "image/tiff" if safe_target.suffix in (".tif", ".tiff") else "application/octet-stream"
     return FileResponse(
-        path=str(target_file),
-        filename=target_file.name,
+        path=str(safe_target),
+        filename=safe_target.name,
         media_type=media_type
     )
+
